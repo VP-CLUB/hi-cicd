@@ -110,6 +110,8 @@ function deploy() {
 
   env_profile=""
   
+  dc_version=v1
+  
   if [ -f ./package.json ]; then
     log_debug "found nodejs app"
     ver=$(get_nodejs_app_version)
@@ -151,7 +153,7 @@ function deploy() {
     if [ "${new}" != "" ]; then
       if [ "${profile}" == "prod" ]; then
         log_warn "Please deploy to stage first!"
-        return -4
+      #   return -4
       elif [ "${profile}" == "test" ] || [ "${profile}" == "load" ]; then
         log_warn "Please deploy to dev first!"
         return -4
@@ -178,7 +180,7 @@ function deploy() {
     env_profile=${profile}
 
     from_dir="oc-build"
-    image_stream="${is_s2i_java}"
+    image_stream=openshift/s2i-java:1.0.5
     ver=$(get_java_app_version)
     log_debug "ver: ${ver}"
     if [ ! -f target/${app}-${ver}.jar ] && [ ! -f target/${app}.war ]; then
@@ -198,6 +200,7 @@ function deploy() {
 
   # change app name for 
   app_name=${app}
+  dc_name=${app}-${dc_version}
   if [ "${postfix}" != "" ]; then
     app_name="${app}-${postfix}"
   fi
@@ -229,26 +232,26 @@ function deploy() {
       fi
   fi
   log_debug "app_options: ${app_options}"
-  is_dc_exist=$(is_exist "dc" "${app_name}" "${project_profile}")
+  is_dc_exist=$(is_exist "dc" "${dc_name}" "${project_profile}")
   log_debug "is_dc_exist: ${is_dc_exist}"
   if [ ${is_dc_exist} == "yes" ]; then
     # remove config triggers
     log_debug "check config trigger"
-    if [ "$(oc set triggers dc/${app_name} -a | grep "config " | awk '{print $3}')" == "true" ]; then
+    if [ "$(oc set triggers dc/${dc_name} -a | grep "config " | awk '{print $3}')" == "true" ]; then
       log_debug "set config trigger"
-      oc set triggers dc/${app_name} --from-config --remove
+      oc set triggers dc/${dc_name} --from-config --remove
     fi
 
     # only set env according user's need
     log_debug "set env for dc"
     if [ "${app_options}" != "" ]; then
-      oc env dc ${app_name} APP_OPTIONS="${app_options}" DEPLOYER="${deployer}" REVISION="${rev}"
+      oc env dc ${dc_name} APP_OPTIONS="${app_options}" DEPLOYER="${deployer}" REVISION="${rev}"
     else
-      oc env dc ${app_name} DEPLOYER="${deployer}" REVISION="${rev}"
+      oc env dc ${dc_name} DEPLOYER="${deployer}" REVISION="${rev}"
     fi
 
     if [ "${cluster}" != "" ]; then
-      oc label dc ${app_name} cluster=${cluster}-${profile} --overwrite
+      oc label dc ${dc_name} cluster=${cluster}-${profile} --overwrite
     fi
   fi
 
@@ -278,7 +281,8 @@ function deploy() {
     fi
     # build image
     log_debug "start build, from_dir: ${from_dir}"
-    oc start-build ${app_name} --from-dir="${from_dir}" --wait=true -n ${project_profile}
+    oc start-build ${app_name} --from-dir="${from_dir}" --wait=true -n ${project_profile} || true
+    
   else
     
     if [ "${postfix}" != "" ]; then
@@ -292,7 +296,7 @@ function deploy() {
   fi
 
   if [ $? != 0 ]; then
-    log_error "failed to create image stream"
+    log_error "failed to create image stream: $?"
     return $?
   fi
 
@@ -321,9 +325,9 @@ function deploy() {
 
   # set Automatically start a new deployment when the image changes
   log_debug "check image trigger"
-  if [ "$(oc set triggers dc/${app_name} -a | grep image | awk '{print $5}')" == "false" ]; then
+  if [ "$(oc set triggers dc/${dc_name} -a | grep image | awk '{print $5}')" == "false" ]; then
     log_debug "set image trigger"
-    oc set triggers dc/${app_name} --auto=true
+    oc set triggers dc/${dc_name} --auto=true
   fi
 
   # expose service
